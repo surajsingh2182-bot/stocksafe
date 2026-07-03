@@ -24,6 +24,7 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 import spacy
+from rapidfuzz import fuzz
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from api.risk_scorer import classify_violation_type  # noqa: E402
@@ -38,6 +39,10 @@ DATE_RE = re.compile(
 )
 CIN_RE = re.compile(r"^[LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}$")
 PAN_RE = re.compile(r"^[A-Z]{5}\d{4}[A-Z]$")
+MATTER_OF_RE = re.compile(
+    r"in the matter of\s+([A-Za-z0-9&.,'\s]+?)(?:\s{2,}|\n\s*\n|Page\s+\d)",
+    re.IGNORECASE,
+)
 
 MONTHS = {m: i for i, m in enumerate(
     ["january", "february", "march", "april", "may", "june", "july",
@@ -199,6 +204,32 @@ def _extract_entities_via_ner(text: str) -> tuple[list[str], list[str]]:
     return companies, directors
 
 
+def _promote_primary_company(company_names: list[str], text: str) -> list[str]:
+    """Every order's title states which entity it's actually about
+    ("Adjudication Order in the matter of X") — but the Noticee table can
+    list several related companies (a parent + subsidiaries), in arbitrary
+    order. Since the pipeline treats company_names[0] as the order's primary
+    attributed company, blindly taking the table's first row can attribute
+    the order to the wrong entity (found via a real search: an order titled
+    "...in the matter of Prime Focus Limited" had "DNEG Creative Services
+    Limited" — a subsidiary — listed first in the table). Fuzzy-match the
+    title's hint against the extracted candidates and promote the best
+    match to the front, rather than re-parsing the (messily line-wrapped)
+    title text as a name directly."""
+    if len(company_names) <= 1:
+        return company_names
+
+    match = MATTER_OF_RE.search(text)
+    if not match:
+        return company_names
+
+    hint = match.group(1).strip()
+    best_idx = max(range(len(company_names)), key=lambda i: fuzz.partial_ratio(hint.lower(), company_names[i].lower()))
+    if best_idx == 0:
+        return company_names
+    return [company_names[best_idx]] + company_names[:best_idx] + company_names[best_idx + 1:]
+
+
 def parse_order_pdf(pdf_path: str) -> dict:
     """Returns dict with: order_number, order_date, order_type, status,
     violation_type, entity_type, company_names (list), director_names (list),
@@ -212,6 +243,7 @@ def parse_order_pdf(pdf_path: str) -> dict:
     company_names, director_names = _extract_noticee_table(full_text)
     if not company_names and not director_names:
         company_names, director_names = _extract_entities_via_ner(full_text)
+    company_names = _promote_primary_company(company_names, full_text)
 
     entity_type = "company" if company_names else ("individual" if director_names else "unknown")
 
