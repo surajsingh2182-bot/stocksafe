@@ -108,23 +108,23 @@ def get_already_scraped_urls(client) -> set[str]:
     return {row["pdf_url"] for row in rows}
 
 
-def _insert_order(parsed: dict, pdf_url: str, client) -> bool:
-    """Resolves entities and inserts one sebi_orders row. Returns True if
-    inserted, False if skipped (missing order_number/date, or duplicate)."""
+def _insert_order(parsed: dict, pdf_url: str, client) -> int:
+    """Resolves entities and inserts one sebi_orders row per company named
+    in the order. SEBI sometimes issues one "omnibus" PDF covering several
+    unrelated companies from the same systemic investigation (e.g. illiquid
+    stock options manipulation) — inserting only one row per PDF (the old
+    behaviour) meant every company but the first showed zero orders despite
+    being genuinely named in a real enforcement order. All companies/
+    directors found are still cross-linked via director_company_map
+    regardless of how many order rows get created. Returns the number of
+    rows inserted (0 if skipped)."""
     if not parsed["order_number"] or not parsed["order_date"]:
         print(f"  skip (couldn't extract order_number/date): {pdf_url}")
-        return False
+        return 0
 
-    company_id = None
-    director_id = None
-
-    # sebi_orders.order_number is UNIQUE, so each PDF becomes exactly one row:
-    # primary company + primary director. All companies/directors found are
-    # still linked to each other via director_company_map below.
-    if parsed["company_names"]:
-        company_id = find_or_create_company(parsed["company_names"][0], client)
+    primary_director_id = None
     if parsed["director_names"]:
-        director_id = find_or_create_director(parsed["director_names"][0], client)
+        primary_director_id = find_or_create_director(parsed["director_names"][0], client)
 
     for director_name in parsed["director_names"]:
         d_id = find_or_create_director(director_name, client)
@@ -132,24 +132,48 @@ def _insert_order(parsed: dict, pdf_url: str, client) -> bool:
             c_id = find_or_create_company(company_name, client)
             link_director_to_company(d_id, c_id, role="noticee", source=pdf_url, client=client)
 
-    try:
-        client.table("sebi_orders").insert({
-            "order_number": parsed["order_number"],
-            "order_date": parsed["order_date"].isoformat(),
-            "order_type": parsed["order_type"],
-            "status": parsed["status"],
-            "violation_type": parsed["violation_type"],
-            "entity_type": parsed["entity_type"],
-            "company_id": company_id,
-            "director_id": director_id,
-            "summary": parsed["raw_text"][:500],
-            "pdf_url": pdf_url,
-            "raw_text": parsed["raw_text"],
-        }).execute()
-        return True
-    except Exception as e:  # duplicate order_number or other insert failure
-        print(f"  skip (insert failed: {e}): {pdf_url}")
-        return False
+    base_row = {
+        "order_number": parsed["order_number"],
+        "order_date": parsed["order_date"].isoformat(),
+        "order_type": parsed["order_type"],
+        "status": parsed["status"],
+        "violation_type": parsed["violation_type"],
+        "summary": parsed["raw_text"][:500],
+        "pdf_url": pdf_url,
+        "raw_text": parsed["raw_text"],
+    }
+
+    inserted = 0
+    if parsed["company_names"]:
+        company_ids = []
+        for name in parsed["company_names"]:
+            cid = find_or_create_company(name, client)
+            if cid not in company_ids:
+                company_ids.append(cid)
+        for company_id in company_ids:
+            try:
+                client.table("sebi_orders").insert({
+                    **base_row,
+                    "entity_type": "company",
+                    "company_id": company_id,
+                    "director_id": primary_director_id,
+                }).execute()
+                inserted += 1
+            except Exception as e:  # duplicate (order_number, company_id) or other failure
+                print(f"  skip (insert failed for company_id={company_id}: {e}): {pdf_url}")
+    else:
+        try:
+            client.table("sebi_orders").insert({
+                **base_row,
+                "entity_type": "individual" if primary_director_id else "unknown",
+                "company_id": None,
+                "director_id": primary_director_id,
+            }).execute()
+            inserted += 1
+        except Exception as e:
+            print(f"  skip (insert failed: {e}): {pdf_url}")
+
+    return inserted
 
 
 def run_scraper(pages: int, client) -> dict:
@@ -180,8 +204,9 @@ def run_scraper(pages: int, client) -> dict:
                     downloaded += 1
 
                     parsed = parse_order_pdf(str(local_path))
-                    if _insert_order(parsed, pdf_url, client):
-                        inserted += 1
+                    rows_inserted = _insert_order(parsed, pdf_url, client)
+                    if rows_inserted > 0:
+                        inserted += rows_inserted
                         already_scraped.add(pdf_url)
                     else:
                         skipped += 1

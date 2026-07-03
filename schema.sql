@@ -45,9 +45,15 @@ CREATE TABLE director_company_map (
 );
 
 -- 6.5  sebi_orders
+-- order_number is NOT globally unique on its own: SEBI sometimes issues one
+-- "omnibus" order PDF covering several unrelated companies from the same
+-- systemic investigation (e.g. illiquid stock options manipulation). One
+-- row is inserted per company actually named in the order, all sharing the
+-- same order_number/date/violation/status — so every named company is
+-- correctly searchable and scored, not just whichever one was parsed first.
 CREATE TABLE sebi_orders (
   id              SERIAL PRIMARY KEY,
-  order_number    TEXT UNIQUE NOT NULL,
+  order_number    TEXT NOT NULL,
   order_date      DATE NOT NULL,
   order_type      TEXT NOT NULL,
   status          TEXT NOT NULL,
@@ -58,7 +64,8 @@ CREATE TABLE sebi_orders (
   summary         TEXT,
   pdf_url         TEXT NOT NULL,
   raw_text        TEXT,
-  created_at      TIMESTAMPTZ DEFAULT NOW()
+  created_at      TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(order_number, company_id)
 );
 CREATE INDEX idx_orders_company ON sebi_orders(company_id);
 CREATE INDEX idx_orders_director ON sebi_orders(director_id);
