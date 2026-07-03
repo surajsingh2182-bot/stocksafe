@@ -28,7 +28,10 @@ def nav(screen, **kwargs):
 
 def render_app_bar():
     c1, c2 = st.columns([3, 1])
-    c1.markdown("## \U0001F6E1️ **Stock**Safe")
+    with c1:
+        if st.button("\U0001F6E1️ **Stock**Safe", key="logo_home", help="Back to home"):
+            if st.session_state.get("screen") != "home":
+                nav("home")
     c2.success("● SEBI Data")
 
 
