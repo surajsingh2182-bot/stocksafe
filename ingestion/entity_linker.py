@@ -5,6 +5,14 @@ import re
 from rapidfuzz import fuzz, process
 
 MATCH_THRESHOLD = 85
+# Scorer: token_set_ratio, not token_sort_ratio — same fix as api/resolver.py.
+# Real bug: PDF page-break line wraps sometimes truncate a company name
+# (e.g. "Prime Focus Limited" split across a page boundary left "Focus
+# Limited" as a separate extraction from another mention). token_sort_ratio
+# scored that pair only 62.5 (below MATCH_THRESHOLD), so the truncated
+# fragment was inserted as a second, near-duplicate company instead of
+# matching the existing one. token_set_ratio correctly scores it 100 (one
+# name's tokens are a clean subset of the other's).
 
 _SUFFIX_RE = re.compile(
     r"\b(ltd|limited|pvt|private|llp|inc|incorporated|co|company|corp|corporation)\b\.?",
@@ -31,7 +39,7 @@ def find_or_create_company(name: str, client) -> int:
 
     if existing:
         choices = {row["name_clean"]: row["id"] for row in existing}
-        best = process.extractOne(name_clean, choices.keys(), scorer=fuzz.token_sort_ratio)
+        best = process.extractOne(name_clean, choices.keys(), scorer=fuzz.token_set_ratio)
         if best and best[1] >= MATCH_THRESHOLD:
             return choices[best[0]]
 
@@ -49,7 +57,7 @@ def find_or_create_director(name: str, client) -> int:
 
     if existing:
         choices = {row["name_clean"]: row["id"] for row in existing}
-        best = process.extractOne(name_clean, choices.keys(), scorer=fuzz.token_sort_ratio)
+        best = process.extractOne(name_clean, choices.keys(), scorer=fuzz.token_set_ratio)
         if best and best[1] >= MATCH_THRESHOLD:
             return choices[best[0]]
 
