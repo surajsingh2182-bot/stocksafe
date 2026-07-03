@@ -68,3 +68,27 @@ def test_classify_violation_type_matches_keywords():
     assert classify_violation_type("This order concerns insider trading based on UPSI.") == "insider_trading"
     assert classify_violation_type("The noticee engaged in circular trading via synchronised trades.") == "circular_trading"
     assert classify_violation_type("No relevant keywords here.") == "default"
+
+
+def test_pfutp_citation_alone_does_not_trigger_fraudulent_scheme():
+    # Real bug: PFUTP is the name of the general regulations almost every
+    # SEBI order is charged under (market manipulation included), not a
+    # marker of a specific fraudulent scheme. 41 of 64 real orders in the
+    # DB were wrongly classified "fraudulent_scheme" (highest severity)
+    # almost entirely from this generic citation.
+    text = (
+        "read with Regulation 3 and 4 of the SEBI (Prohibition of Fraudulent "
+        "and Unfair Trade Practices relating to Securities Market) Regulations "
+        "(PFUTP Regulations), the Noticee created artificial volume through "
+        "manipulative reversal trades in illiquid stock options."
+    )
+    assert classify_violation_type(text) == "market_manipulation"
+
+
+def test_genuine_ponzi_scheme_language_still_triggers_fraudulent_scheme():
+    text = (
+        "SEBI observed that the Company was operating a Ponzi Scheme and "
+        "mobilising funds in the nature of a collective investment scheme "
+        "without obtaining a certificate of registration."
+    )
+    assert classify_violation_type(text) == "fraudulent_scheme"

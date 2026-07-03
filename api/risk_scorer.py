@@ -18,10 +18,26 @@ DIRECTOR_FACTOR = 0.8
 # Scanned against an order's raw_text by ingestion/pdf_parser.py to classify
 # violation_type. Checked in this priority order — first match wins, since a
 # single order can mention several violation types in passing.
+#
+# "pfutp"/"fraudulent and unfair trade practice" were removed from
+# fraudulent_scheme — real bug: PFUTP (Prohibition of Fraudulent and Unfair
+# Trade Practices) is the *name of the general regulations* nearly every
+# SEBI enforcement order is charged under, market-manipulation cases
+# included — it says nothing about which *specific* misconduct occurred.
+# Verified against real data: 41 of 64 orders in the DB were classified
+# "fraudulent_scheme" (the highest-severity, highest-scoring category)
+# almost entirely because they cited PFUTP as boilerplate, while the
+# one order confirmed to be a genuine fraudulent scheme (a Ponzi-style
+# collective investment scheme) never even mentions "pfutp" at all — it
+# has actually distinctive language ("ponzi", "collective investment
+# scheme", "mobilising funds") instead, which is what the keywords below
+# now require.
 VIOLATION_KEYWORDS = {
     "fraudulent_scheme": [
-        "fraudulent scheme", "fraudulent and unfair trade practice", "pfutp",
-        "device, scheme or artifice to defraud",
+        "fraudulent scheme", "device, scheme or artifice to defraud",
+        "ponzi", "collective investment scheme", "mobilising funds",
+        "mobilizing funds", "misappropriat", "duped investors",
+        "diverted the funds", "siphon",
     ],
     "market_manipulation": [
         "manipulat", "artificial price", "artificial volume", "pump and dump",
