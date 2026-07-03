@@ -279,11 +279,32 @@ def _promote_primary_company(company_names: list[str], text: str) -> list[str]:
     return [company_names[best_idx]] + company_names[:best_idx] + company_names[best_idx + 1:]
 
 
+SUMMARY_LENGTH = 2000
+
+
+def _extract_summary(text: str, length: int = SUMMARY_LENGTH) -> str:
+    """Every order opens with ~500-1000 chars of near-identical boilerplate
+    (title, "BEFORE THE ADJUDICATING OFFICER", "UNDER SECTION 15-I...") —
+    verified against real data that this pushed the actual violation
+    narrative (which starts at the "BACKGROUND" section) past the old
+    500-char summary cutoff entirely for some orders, leaving Gemini's
+    red-flag generation with nothing but header text to work from for that
+    company. Starting the summary at "BACKGROUND" when present skips the
+    boilerplate and gets straight to the substance; falls back to the top
+    of the document for the ~1 in 20 orders that use different section
+    wording."""
+    idx = text.upper().find("BACKGROUND")
+    start = idx if idx != -1 else 0
+    return text[start:start + length]
+
+
 def parse_order_pdf(pdf_path: str) -> dict:
     """Returns dict with: order_number, order_date, order_type, status,
     violation_type, entity_type, company_names (list), director_names (list),
-    raw_text (first 5000 chars). Caller (scraper.py) fills in pdf_url, since
-    that's known from the download step, not the PDF content."""
+    summary (~2000 chars starting from the actual narrative, not the
+    boilerplate header — see _extract_summary), raw_text (first 5000 chars).
+    Caller (scraper.py) fills in pdf_url, since that's known from the
+    download step, not the PDF content."""
     doc = fitz.open(pdf_path)
     full_text = "".join(page.get_text() for page in doc)
     doc.close()
@@ -305,5 +326,6 @@ def parse_order_pdf(pdf_path: str) -> dict:
         "entity_type": entity_type,
         "company_names": company_names,
         "director_names": director_names,
+        "summary": _extract_summary(full_text),
         "raw_text": full_text[:5000],
     }

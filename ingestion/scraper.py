@@ -138,7 +138,7 @@ def _insert_order(parsed: dict, pdf_url: str, client) -> int:
         "order_type": parsed["order_type"],
         "status": parsed["status"],
         "violation_type": parsed["violation_type"],
-        "summary": parsed["raw_text"][:500],
+        "summary": parsed["summary"],
         "pdf_url": pdf_url,
         "raw_text": parsed["raw_text"],
     }

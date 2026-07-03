@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ingestion.pdf_parser import (
     _extract_status,
+    _extract_summary,
     _is_citation_context,
     _looks_like_company,
     _looks_like_person,
@@ -139,3 +140,29 @@ def test_rejects_suffix_only_fragment_as_company():
 
 def test_accepts_real_company_name_with_suffix():
     assert _looks_like_company("Ambition Plaza Private Limited")
+
+
+def test_summary_skips_boilerplate_header_to_background_section():
+    # Real bug: the summary used to be raw_text[:500], which for some
+    # orders ended before the "BACKGROUND" section even started, leaving
+    # Gemini's red-flag generation with nothing but generic header/legal-
+    # citation text ("BEFORE THE ADJUDICATING OFFICER... UNDER SECTION
+    # 15-I...") — identical across every order regardless of what actually
+    # happened. Verified against a real order (IDBI Trusteeship Services):
+    # switching to start at BACKGROUND turned a useless generic red flag
+    # into an accurate, case-specific one.
+    text = (
+        "Adjudication Order in the matter of Example Corp\n"
+        "BEFORE THE ADJUDICATING OFFICER\n"
+        "UNDER SECTION 15-I OF THE SEBI ACT, 1992...\n" + ("x" * 400) +
+        "\nBACKGROUND OF THE CASE\n1. SEBI observed that Example Corp engaged in artificial trading."
+    )
+    summary = _extract_summary(text, length=100)
+    assert summary.startswith("BACKGROUND")
+    assert "artificial trading" in summary
+
+
+def test_summary_falls_back_to_start_when_no_background_section():
+    text = "Adjudication Order in the matter of Example Corp with no section markers at all."
+    summary = _extract_summary(text, length=20)
+    assert summary == text[:20]

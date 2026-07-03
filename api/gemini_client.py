@@ -29,9 +29,14 @@ def _format_orders_text(orders: list[dict]) -> str:
     for order in orders:
         order_date = order["order_date"]
         date_str = order_date.strftime("%d %b %Y") if hasattr(order_date, "strftime") else str(order_date)
+        # summary now starts at the order's "BACKGROUND" section rather than
+        # the boilerplate header (see ingestion/pdf_parser.py's
+        # _extract_summary) — a 200-char slice of it was verified to still
+        # be too short to reach any actual violation narrative for some
+        # orders, leaving Gemini nothing but header text to describe.
         lines.append(
             f"- {order['violation_type']} | Order #{order['order_number']} | {date_str} | "
-            f"{(order.get('summary') or '')[:200]}"
+            f"{(order.get('summary') or '')[:1200]}"
         )
     return "\n".join(lines)
 
