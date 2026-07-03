@@ -66,13 +66,31 @@ def test_no_companies_in_db_returns_none():
 
 def test_suggestions_returned_for_partial_match():
     client = _FakeClient(COMPANIES)
-    suggestions = get_suggestions("Karvy Broking", client)
-    # "Karvy Broking" is close enough to "Karvy Stock Broking" to actually
-    # resolve outright, so use a query in the 50-69 band instead.
-    suggestions = get_suggestions("Karvy", client)
+    # "Karvy Financial" shares one token with "Karvy Stock Broking" but not
+    # the other, landing in the 50-69 suggestion band rather than resolving
+    # outright.
+    suggestions = get_suggestions("Karvy Financial", client)
     assert all(50 <= s["match_score"] < 70 for s in suggestions)
 
 
 def test_unrelated_query_gets_no_suggestions():
     client = _FakeClient(COMPANIES)
     assert get_suggestions("asdfghjkl", client) == []
+
+
+def test_short_abbreviation_resolves_against_longer_name():
+    # Regression test: a real user searched "DNEG" expecting to find "DNEG
+    # Creative Services Limited" and got nothing, because the resolver used
+    # to score short-query-vs-longer-name pairs far too low (token_sort_ratio
+    # scored this exact case at 31). token_set_ratio fixes it.
+    client = _FakeClient(COMPANIES + ["DNEG Creative Services Limited"])
+    result = resolve_company("DNEG", client)
+    assert result is not None
+    assert result["name"] == "DNEG Creative Services Limited"
+
+
+def test_partial_company_name_still_resolves():
+    client = _FakeClient(COMPANIES)
+    result = resolve_company("Karvy Broking", client)
+    assert result is not None
+    assert result["name"] == "Karvy Stock Broking"

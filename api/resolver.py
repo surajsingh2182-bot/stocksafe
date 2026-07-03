@@ -7,6 +7,14 @@ match above score 70"):
   score >= 70        -> confirmed match
   50 <= score < 70    -> returned as a suggestion on a 404
   score < 50          -> not shown as a suggestion at all
+
+Scorer: token_set_ratio, not token_sort_ratio. Found via a real user
+report — token_sort_ratio scores short/partial queries against a longer
+company name far too low to be usable (e.g. "DNEG" vs "DNEG Creative
+Services Limited" scored 31, well under even the suggestion floor).
+token_set_ratio correctly treats a query as a subset of a longer name
+(scores that same pair 100) while still rejecting unrelated garbage
+queries (score < 20 against real company names in testing).
 """
 import sys
 from pathlib import Path
@@ -29,7 +37,7 @@ def resolve_company(query: str, client) -> dict | None:
         return None
 
     choices = {row["name_clean"]: row for row in companies}
-    best = process.extractOne(name_clean, choices.keys(), scorer=fuzz.token_sort_ratio)
+    best = process.extractOne(name_clean, choices.keys(), scorer=fuzz.token_set_ratio)
     if best and best[1] >= MATCH_THRESHOLD:
         return choices[best[0]]
     return None
@@ -43,7 +51,7 @@ def get_suggestions(query: str, client, limit: int = 3) -> list[dict]:
 
     scored = []
     for row in companies:
-        score = fuzz.token_sort_ratio(name_clean, row["name_clean"])
+        score = fuzz.token_set_ratio(name_clean, row["name_clean"])
         if SUGGESTION_MIN <= score < MATCH_THRESHOLD:
             scored.append((score, row))
     scored.sort(key=lambda pair: -pair[0])
