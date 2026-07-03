@@ -52,24 +52,34 @@ def _extract_json(text: str) -> dict:
 
 def get_ai_analysis(orders: list[dict], company_name: str) -> dict:
     """Returns {"red_flags": [...], "tip_of_day": "..."}. Retries once on
-    invalid JSON; falls back to an empty-but-valid shape if both attempts
-    fail, so a flaky Gemini response never 500s the /search endpoint."""
+    invalid JSON, and falls back to an empty-but-valid shape on ANY failure
+    (bad JSON, or the API call itself raising) so a flaky Gemini response —
+    or a free-tier quota/network error — never 500s the /search endpoint.
+    Verified necessary against a real production 500: a rolling alias
+    silently pointed at a model with only a 20-requests/day free quota, and
+    the resulting ResourceExhausted exception from generate_content() was
+    completely uncaught, propagating all the way to the endpoint."""
     genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-    # PRD pinned "gemini-1.5-flash", which Google has since retired entirely
-    # (confirmed via ListModels against a real key — not in the available
-    # set at all). "gemini-flash-latest" is a rolling alias to the current
-    # recommended flash model, which avoids this exact breakage recurring.
-    model = genai.GenerativeModel("gemini-flash-latest")
+    # PRD pinned "gemini-1.5-flash", which Google has since retired entirely.
+    # Tried "gemini-flash-latest" (a rolling alias) next, but that caused a
+    # real outage: the alias silently resolved to "gemini-3.5-flash", whose
+    # free tier allows only 20 requests/day — a fraction of what a rolling
+    # "latest" alias implies, with no warning before it broke. Pinned to a
+    # specific, verified-working lightweight model instead — "-lite" models
+    # are positioned for higher-throughput free-tier use, and pinning trades
+    # the (known, occasional, controllable) need to update this on future
+    # deprecation for the (invisible, uncontrollable) risk of alias drift.
+    model = genai.GenerativeModel("gemini-2.5-flash-lite")
     prompt = PROMPT_TEMPLATE.format(
         company_name=company_name,
         orders_text=_format_orders_text(orders),
     )
 
     for _attempt in range(2):
-        response = model.generate_content(prompt)
         try:
+            response = model.generate_content(prompt)
             data = _extract_json(response.text)
-        except (json.JSONDecodeError, AttributeError):
+        except Exception:
             continue
         if "red_flags" in data and "tip_of_day" in data:
             return data
