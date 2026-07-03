@@ -66,12 +66,7 @@ def screen_home():
             st.warning("Enter a company name or paste a tip first.")
 
     st.caption("TRY AN EXAMPLE")
-    p1, p2, p3 = st.columns(3)
-    examples = [
-        ("Satyam Computers", "Satyam Computer Services"),
-        ("Karvy Broking", "Karvy Stock Broking"),
-        ("PC Jeweller", "PC Jeweller Ltd"),
-    ]
+
     def _fill_example(val):
         # Setting session_state for a key already bound to an instantiated
         # widget raises StreamlitAPIException — must go through an on_click
@@ -79,8 +74,24 @@ def screen_home():
         # `if button: ...` body.
         st.session_state["search_query"] = val
 
-    for col, (label, val) in zip([p1, p2, p3], examples):
-        col.button(label, key=f"pill_{label}", on_click=_fill_example, args=(val,))
+    # Fetched once per session (not on every rerun) so the pills don't
+    # reshuffle every time you interact with something else on this screen.
+    # Pulled from the real dataset — the PRD's own examples (Satyam, Karvy,
+    # PC Jeweller) are illustrative and aren't actually in this database.
+    if "example_companies" not in st.session_state:
+        data, status = call_api("GET", "/example-companies", params={"count": 5})
+        # A few scraped names have stray newlines from PDF line-wrapping
+        # (e.g. "BSE \nLimited") — collapse whitespace for a clean pill.
+        st.session_state["example_companies"] = (
+            [" ".join(name.split()) for name in data.get("companies", [])] if status == 200 else []
+        )
+
+    examples = st.session_state["example_companies"]
+    if examples:
+        cols = st.columns(len(examples))
+        for col, name in zip(cols, examples):
+            label = name if len(name) <= 20 else name[:17] + "..."
+            col.button(label, key=f"pill_{name}", on_click=_fill_example, args=(name,))
 
     st.divider()
 

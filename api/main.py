@@ -1,6 +1,7 @@
-"""StockSafe API. 9 endpoints: the 8 from PRD v2 Section 9.2 plus
-GET /recent-searches (see plan resolution note below)."""
+"""StockSafe API. 10 endpoints: the 8 from PRD v2 Section 9.2 plus
+GET /recent-searches and GET /example-companies (see plan resolution notes)."""
 import os
+import random
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -102,6 +103,24 @@ def recent_searches():
         for row in rows
     ]
     return {"searches": searches}
+
+
+@app.get("/example-companies")
+def example_companies(count: int = 5):
+    """Random example companies for Screen 1's "Try an example" pills.
+    Not in the PRD (its examples — Satyam, Karvy, PC Jeweller — are
+    illustrative and aren't in this dataset), added so the pills always
+    point at companies that actually resolve to a real result. Only
+    samples companies with at least one sebi_orders row, so every example
+    is guaranteed to return a meaningful (non-empty) verdict."""
+    order_rows = supabase.table("sebi_orders").select("company_id").execute().data or []
+    company_ids = list({row["company_id"] for row in order_rows if row["company_id"]})
+    if not company_ids:
+        return {"companies": []}
+
+    sample_ids = random.sample(company_ids, min(count, len(company_ids)))
+    rows = supabase.table("companies").select("name").in_("id", sample_ids).execute().data or []
+    return {"companies": [row["name"] for row in rows]}
 
 
 @app.post("/search")
