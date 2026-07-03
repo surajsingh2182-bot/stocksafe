@@ -3,7 +3,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ingestion.pdf_parser import _extract_status, _looks_like_company, _looks_like_person, _promote_primary_company
+from ingestion.pdf_parser import (
+    _extract_status,
+    _is_citation_context,
+    _looks_like_company,
+    _looks_like_person,
+    _promote_primary_company,
+)
 
 
 def test_rejects_legal_boilerplate_as_company():
@@ -83,3 +89,53 @@ def test_status_only_settled_for_settlement_order_type():
     assert _extract_status("Settlement Order") == "settled"
     assert _extract_status("WTM Order") == "active"
     assert _extract_status("Board Order") == "active"
+
+
+def test_rejects_entity_cited_only_as_legal_precedent():
+    # Real bug: an unrelated, legitimate company (Apollo Tyres Limited) was
+    # cited purely as case-law precedent in a Noticee's legal defense — "...
+    # relied upon the Hon'ble SAT Order ... in the matter of Apollo Tyres
+    # Limited (SAT Appeal No. 23 of 2019)" — and unfiltered NER swept it up
+    # as if it were an accused party in the current order, wrongly showing
+    # it as High Risk / involved in fraud.
+    text = (
+        "The Noticee also referred and relied upon the Hon'ble SAT Order dated "
+        "September 27, 2023 in the matter of Apollo Tyres Limited (SAT Appeal "
+        "No. 23 of 2019); and Hon'ble SC Order dated February 04, 2024."
+    )
+    start = text.index("Apollo Tyres Limited")
+    end = start + len("Apollo Tyres Limited")
+    assert _is_citation_context(text, start, end)
+
+
+def test_rejects_precedent_citation_lacking_trailing_appeal_marker():
+    # The same cited case is often mentioned twice in one order — a second
+    # reference without the "(SAT Appeal No. ...)" suffix must still be
+    # caught via the preceding "SAT Order ... in the matter of" lead-in.
+    text = (
+        "affirming the Hon'ble SAT Order dated September 27, 2023 in the "
+        "matter of Apollo Tyres Limited, which was challenged by SEBI"
+    )
+    start = text.index("Apollo Tyres Limited")
+    end = start + len("Apollo Tyres Limited")
+    assert _is_citation_context(text, start, end)
+
+
+def test_accepts_genuine_party_mention_not_a_citation():
+    text = "In the matter of Citrus Check Inns Limited\n\nBACKGROUND OF THE CASE"
+    start = text.index("Citrus Check Inns Limited")
+    end = start + len("Citrus Check Inns Limited")
+    assert not _is_citation_context(text, start, end)
+
+
+def test_rejects_suffix_only_fragment_as_company():
+    # Real bug: a page-break text artifact split a real company's name away
+    # from its own suffix ("...Ambition Plaza\nPage 2 of 14\nPrivate Limited
+    # was converted to..."), leaving spaCy to extract the bare suffix
+    # "Private Limited" as its own fake ORG entity.
+    assert not _looks_like_company("Private Limited")
+    assert not _looks_like_company("Limited Company")
+
+
+def test_accepts_real_company_name_with_suffix():
+    assert _looks_like_company("Ambition Plaza Private Limited")

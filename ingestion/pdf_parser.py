@@ -179,6 +179,14 @@ def _looks_like_company(name: str) -> bool:
         return False
     if "noticee" in name.lower() or re.search(r"\bAct\b|\bVs\b", name, re.IGNORECASE):
         return False
+    # Reject suffix-only fragments like "Private Limited" with no actual
+    # name attached — verified necessary against a real order where a
+    # mid-page-break line wrap ("...Ambition Plaza\nPage 2 of 14\nPrivate
+    # Limited was converted to...") split a real company's name away from
+    # its own suffix, leaving spaCy to extract the bare suffix as an ORG.
+    core = _COMPANY_SUFFIX_RE.sub("", name).strip()
+    if len(core) < 3:
+        return False
     return bool(_COMPANY_SUFFIX_RE.search(name))
 
 
@@ -194,19 +202,53 @@ def _looks_like_person(name: str) -> bool:
     return bool(_PERSON_NAME_RE.match(name.strip()))
 
 
+CITATION_AFTER_RE = re.compile(
+    r"^\s*\(?\s*(SAT|Civil|Criminal|Writ|Special Leave|SC|WP)\s*(Appeal|Petition|SLP)\s*No\.?",
+    re.IGNORECASE,
+)
+CITATION_BEFORE_RE = re.compile(
+    r"(SAT|Supreme Court|SC|Hon.ble)\s+(Order|Appeal)\b[\s\S]{0,150}in\s+the\s+matter\s+of\s*$",
+    re.IGNORECASE,
+)
+
+
+def _is_citation_context(text: str, start_char: int, end_char: int) -> bool:
+    """True if an entity is named only as a cited legal precedent, not a
+    party to *this* order — e.g. "...relied upon the SAT Order ... in the
+    matter of Apollo Tyres Limited (SAT Appeal No. 23 of 2019)". Verified
+    necessary against a real order: a Noticee's legal defense cited an old,
+    completely unrelated case involving Apollo Tyres Limited (a legitimate
+    company with nothing to do with this order), and unfiltered NER swept
+    it up as if it were an accused party — including a second mention of
+    the same company later in the same paragraph that lacked the trailing
+    "(SAT Appeal No. ...)" marker, so both directions are checked: what
+    immediately follows the mention (the appeal-number pattern), and what
+    precedes it (a "SAT/SC Order ... in the matter of" lead-in, which both
+    of that real order's citations shared even where the trailing marker
+    didn't repeat)."""
+    after = text[end_char:end_char + 60]
+    if CITATION_AFTER_RE.search(after):
+        return True
+    before = text[max(0, start_char - 200):start_char]
+    return bool(CITATION_BEFORE_RE.search(before))
+
+
 def _extract_entities_via_ner(text: str) -> tuple[list[str], list[str]]:
     """Fallback path when no Noticee table is found. Deliberately strict —
     better to return nothing (order still gets inserted with entity_type
     "unknown") than to fabricate a fake company/director from NER noise."""
     nlp = _get_nlp()
-    doc = nlp(text[:20000])  # cap for speed — entities are always near the top
+    window_text = text[:20000]  # cap for speed — entities are always near the top
+    doc = nlp(window_text)
     companies = sorted({
         ent.text.strip() for ent in doc.ents
         if ent.label_ == "ORG" and _looks_like_company(ent.text.strip())
+        and not _is_citation_context(window_text, ent.start_char, ent.end_char)
     })
     directors = sorted({
         ent.text.strip() for ent in doc.ents
         if ent.label_ == "PERSON" and _looks_like_person(ent.text.strip())
+        and not _is_citation_context(window_text, ent.start_char, ent.end_char)
     })
     return companies, directors
 
