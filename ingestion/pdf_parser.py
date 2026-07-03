@@ -100,14 +100,21 @@ def _extract_order_type(text: str) -> str:
     return "Enforcement Order"
 
 
-def _extract_status(text: str, order_type: str) -> str:
-    lower = text.lower()
-    if order_type == "Settlement Order" or "consent terms" in lower or "consent application" in lower:
-        return "consent_order"
-    if "settlement order" in lower or "terms of settlement" in lower:
+def _extract_status(order_type: str) -> str:
+    """order_type (from the document's own title/header) is a much stronger
+    signal than scanning the body for settlement-related phrases — verified
+    via a real bug: an order titled "Adjudication Order" (a genuine, active
+    penalty) contained the sentence "...terms of settlement should be
+    attractive so that it could attract the noticees..." — SEBI explaining
+    its general Settlement Scheme *policy* as procedural background, not
+    saying this case was settled. Scanning the whole body for that phrase
+    wrongly flagged it "settled", cutting an 87 (High Risk) score to 29
+    (Low Risk). SEBI only titles a document "Settlement Order" when a
+    matter is actually settled, so order_type alone decides this now.
+    "appealed" isn't derivable from the order text at all (it's a future
+    event) — "active" is the correct default either way."""
+    if order_type == "Settlement Order":
         return "settled"
-    # "active" is the reasonable default for a freshly-published order — later
-    # appeals aren't knowable from the order text itself at ingestion time.
     return "active"
 
 
@@ -251,7 +258,7 @@ def parse_order_pdf(pdf_path: str) -> dict:
         "order_number": _extract_order_number(full_text),
         "order_date": _extract_order_date(full_text),
         "order_type": order_type,
-        "status": _extract_status(full_text, order_type),
+        "status": _extract_status(order_type),
         "violation_type": classify_violation_type(full_text),
         "entity_type": entity_type,
         "company_names": company_names,

@@ -3,7 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ingestion.pdf_parser import _looks_like_company, _looks_like_person, _promote_primary_company
+from ingestion.pdf_parser import _extract_status, _looks_like_company, _looks_like_person, _promote_primary_company
 
 
 def test_rejects_legal_boilerplate_as_company():
@@ -70,3 +70,16 @@ def test_promote_primary_company_noop_without_title_match():
 
 def test_promote_primary_company_noop_single_entry():
     assert _promote_primary_company(["Only Company Limited"], "irrelevant text") == ["Only Company Limited"]
+
+
+def test_status_only_settled_for_settlement_order_type():
+    # Real bug: a genuine Adjudication Order (active penalty) mentioned
+    # "terms of settlement" as procedural background describing SEBI's
+    # general Settlement Scheme policy, not this case's outcome — wrongly
+    # scanning the body for that phrase flagged it "settled", cutting the
+    # risk score from 87 (High Risk) to 29 (Low Risk) for the same
+    # violation. order_type (from the title) is the only reliable signal now.
+    assert _extract_status("Adjudication Order") == "active"
+    assert _extract_status("Settlement Order") == "settled"
+    assert _extract_status("WTM Order") == "active"
+    assert _extract_status("Board Order") == "active"
